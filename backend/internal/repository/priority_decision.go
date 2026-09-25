@@ -15,6 +15,7 @@ type PriorityDecisionRepository interface {
 	Get(context.Context, uint) (model.PriorityDecision, error)
 	CreateWithRevision(context.Context, *model.PriorityDecision, *model.PriorityDecisionRevision) error
 	UpdateWithRevision(context.Context, uint, uint, *model.PriorityDecision, *model.PriorityDecisionRevision) error
+	FinalizeWithRevisionInTx(ctx context.Context, tx *gorm.DB, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision) error
 	Delete(context.Context, uint) error
 	CountByStatus(context.Context) (map[string]int64, error)
 }
@@ -68,19 +69,30 @@ func (r *priorityDecisionRepository) CreateWithRevision(ctx context.Context, ite
 }
 func (r *priorityDecisionRepository) UpdateWithRevision(ctx context.Context, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&model.PriorityDecision{}).
-			Where("id = ? AND version = ?", id, version).
-			Select("*").Omit("ID", "Code", "CreatedAt", "DeletedAt", "PreparedBy", "Revisions").
-			Updates(item)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return ErrVersionConflict
-		}
-		revision.PriorityDecisionID = id
-		return tx.Create(revision).Error
+		return r.finalizeInTx(ctx, tx, id, version, item, revision)
 	})
+}
+
+// FinalizeWithRevisionInTx performs the optimistic-lock update and appends the
+// immutable revision inside a caller-owned transaction so the decision and its
+// cross-aggregate bridge effects commit atomically.
+func (r *priorityDecisionRepository) FinalizeWithRevisionInTx(ctx context.Context, tx *gorm.DB, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision) error {
+	return r.finalizeInTx(ctx, tx, id, version, item, revision)
+}
+
+func (r *priorityDecisionRepository) finalizeInTx(ctx context.Context, tx *gorm.DB, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision) error {
+	result := tx.WithContext(ctx).Model(&model.PriorityDecision{}).
+		Where("id = ? AND version = ?", id, version).
+		Select("*").Omit("ID", "Code", "CreatedAt", "DeletedAt", "PreparedBy", "Revisions").
+		Updates(item)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrVersionConflict
+	}
+	revision.PriorityDecisionID = id
+	return tx.Create(revision).Error
 }
 func (r *priorityDecisionRepository) Delete(ctx context.Context, id uint) error {
 	return r.store.Delete(ctx, id)

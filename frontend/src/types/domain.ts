@@ -16,6 +16,8 @@ export interface DomainRecord {
   evidence: string;
   relatedCode: string;
   preparedBy?: string;
+  // 桥梁工作台字段：同设施仍处于确认阶段（new/verified）的缺陷条数。
+  unconfirmedDefectCount?: number;
   revisions?: PriorityDecisionRevision[];
   createdAt: string;
   updatedAt: string;

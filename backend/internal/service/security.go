@@ -11,11 +11,13 @@ import (
 	"github.com/blueship581/railway-bridge-defect-priority/backend/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type SecurityService interface {
 	Login(context.Context, dto.LoginRequest) (dto.LoginResponse, error)
 	Audit(context.Context, string, string, string, string, uint, string, string, string) error
+	AuditInTx(context.Context, *gorm.DB, string, string, string, string, uint, string, string, string) error
 	ListAudits(context.Context, int, int, string) ([]model.AuditLog, int64, error)
 	AuditSummary(context.Context, time.Duration) (model.AuditSummary, error)
 	EntityHistory(context.Context, string, uint, int) ([]model.AuditLog, error)
@@ -56,6 +58,16 @@ func (s *securityService) Login(ctx context.Context, input dto.LoginRequest) (dt
 }
 
 func (s *securityService) Audit(ctx context.Context, actor, requestID, action, entityType string, entityID uint, before, after, detail string) error {
+	return s.appendAudit(ctx, s.repository.AppendAudit, actor, requestID, action, entityType, entityID, before, after, detail)
+}
+
+func (s *securityService) AuditInTx(ctx context.Context, tx *gorm.DB, actor, requestID, action, entityType string, entityID uint, before, after, detail string) error {
+	return s.appendAudit(ctx, func(ctx context.Context, log *model.AuditLog) error {
+		return s.repository.AppendAuditInTx(ctx, tx, log)
+	}, actor, requestID, action, entityType, entityID, before, after, detail)
+}
+
+func (s *securityService) appendAudit(ctx context.Context, persist func(context.Context, *model.AuditLog) error, actor, requestID, action, entityType string, entityID uint, before, after, detail string) error {
 	if actor == "" {
 		actor = "system"
 	}
@@ -65,7 +77,7 @@ func (s *securityService) Audit(ctx context.Context, actor, requestID, action, e
 	if action == "" || entityType == "" {
 		return fmt.Errorf("audit action and entity type are required")
 	}
-	return s.repository.AppendAudit(ctx, &model.AuditLog{
+	return persist(ctx, &model.AuditLog{
 		Actor: actor, RequestID: requestID, Action: action, EntityType: entityType,
 		EntityID: entityID, BeforeState: before, AfterState: after, Detail: detail,
 		CreatedAt: time.Now().UTC(),

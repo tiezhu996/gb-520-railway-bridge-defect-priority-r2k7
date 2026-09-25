@@ -15,6 +15,12 @@ const (
 
 var AllDefectState = []string{"new", "verified", "monitoring", "mitigated", "closed"}
 
+// DefectConfirmationStates are the states in which a defect is still being
+// confirmed (尚未确认). A restricted bridge may not return to normal service
+// while any same-facility defect remains in one of these states. Mirrored in
+// frontend/src/types/status.ts.
+var DefectConfirmationStates = []string{"new", "verified"}
+
 type PriorityLevel string
 
 const (

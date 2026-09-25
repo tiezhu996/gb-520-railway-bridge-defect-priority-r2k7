@@ -69,11 +69,11 @@ func newPriorityTestService(t *testing.T) PriorityDecisionService {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&model.PriorityDecision{}, &model.PriorityDecisionRevision{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.PriorityDecision{}, &model.PriorityDecisionRevision{}, &model.BridgeAsset{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	security := NewSecurityService(repository.NewSecurityRepository(db), config.Config{})
-	return NewPriorityDecisionService(repository.NewPriorityDecisionRepository(db), security)
+	return NewPriorityDecisionService(db, repository.NewPriorityDecisionRepository(db), repository.NewBridgeAssetRepository(db), security)
 }
 
 func priorityCreateInput(code, evidence string) dto.CreatePriorityDecision {

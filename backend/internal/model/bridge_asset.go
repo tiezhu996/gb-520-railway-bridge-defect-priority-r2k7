@@ -16,6 +16,10 @@ type BridgeAsset struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+
+	// UnconfirmedDefectCount is populated by the service layer (not persisted):
+	// number of same-facility defects still in the confirmation states.
+	UnconfirmedDefectCount int64 `json:"unconfirmedDefectCount" gorm:"-"`
 }
 
 func (item *BridgeAsset) GetBase() *BaseModel { return &item.BaseModel }
@@ -23,3 +27,13 @@ func (item *BridgeAsset) GetBase() *BaseModel { return &item.BaseModel }
 func (item BridgeAsset) TableName() string { return "bridge_assets" }
 
 var BridgeAssetInitialStatus = "active"
+
+// Bridge operational states. A restrict/urgent priority decision moves active
+// bridges to BridgeStatusRestricted; closed or retired bridges block the
+// decision instead of being reopened.
+const (
+	BridgeStatusActive     = "active"
+	BridgeStatusRestricted = "restricted"
+	BridgeStatusClosed     = "closed"
+	BridgeStatusRetired    = "retired"
+)

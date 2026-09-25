@@ -42,6 +42,8 @@ docker compose down -v --remove-orphans
 - 所有状态变化使用乐观锁并写入审计日志；审计查询仅 reviewer/admin 可见。
 - 优先级决定的每次创建、草稿更新和定稿均追加不可变版本，保留证据、状态、操作者、request ID 和完整快照。
 - 优先级只能由不同于拟制人的 reviewer/admin 定稿；observe/restrict/urgent 均为不可覆盖终态。
+- 定稿为 `restrict`（限速）或 `urgent`（立即处置）时，同设施处于 `active` 的桥梁在同一事务内自动进入 `restricted` 并写入审计；同设施存在 `closed`/`retired` 桥梁时定稿被拒绝（422），卡片不会放行。`observe` 不改动桥梁状态。
+- 受限桥梁恢复为 `active` 仅限 reviewer/admin；同设施仍有处于确认阶段（`new`/`verified`）的缺陷时拒绝恢复，错误信息返回剩余条数；缺陷推进到 `monitoring`/`mitigated` 后才可恢复。桥梁工作台列表展示每座桥的限速状态与未确认缺陷条数。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
 - 提供脱敏运行配置、当前会话、审计汇总和单实体审计历史接口。
 - 业务工作台支持查询、新建、状态推进、风险标识及操作审计查看。
@@ -124,6 +126,7 @@ cd .. && docker compose config --quiet
 |---|---|---|
 | `DefectState` | `new, verified, monitoring, mitigated, closed` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `PriorityLevel` | `observe, restrict, urgent` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| 缺陷确认阶段 `DefectConfirmationStates` | `new, verified`（恢复正常运行的阻塞条件） | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。
 

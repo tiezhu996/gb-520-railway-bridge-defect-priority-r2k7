@@ -26,6 +26,14 @@ func (item PriorityDecision) TableName() string { return "priority_decisions" }
 
 var PriorityDecisionInitialStatus = "draft"
 
+// Finalized decision levels that must force the affected facility into
+// restricted service. Observe is a watch-only outcome and changes nothing.
+const (
+	PriorityLevelObserve  = "observe"
+	PriorityLevelRestrict = "restrict"
+	PriorityLevelUrgent   = "urgent"
+)
+
 // PriorityDecisionRevision is append-only. It is written in the same
 // transaction as the aggregate so an accepted version can always be traced
 // back to its evidence, actor and request.
