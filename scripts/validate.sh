@@ -83,6 +83,35 @@ locked_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "http://127.0.0.1
 [ "$locked_status" = "422" ]
 curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/audit-summary?windowHours=24" -H "Authorization: Bearer $reviewer_token" | jq -e '.data.total >= 3 and .data.transitions >= 1' >/dev/null
 
+# --- 限速定稿联动桥梁受限 / 关闭桥梁拒绝定稿 / 受限恢复守卫 ---
+k42_bridge_id=$(curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/bridges?search=BA-004" -H "Authorization: Bearer $viewer_token" | jq -er '.data[0].id')
+k42_bridge_version=$(curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/bridges/$k42_bridge_id" -H "Authorization: Bearer $viewer_token" | jq -er '.data.version')
+# urgent 定稿后同设施 BA-004 必须跟随进入 restricted，且版本 +1。
+curl -fsS "http://127.0.0.1:${BACKEND_PORT}/api/bridges/$k42_bridge_id" -H "Authorization: Bearer $viewer_token" | jq -e --argjson v "$k42_bridge_version" '.data.status == "restricted" and .data.version == ($v + 1) and (.data.unconfirmedDefectCount | type == "number")' >/dev/null
+
+# 桥梁已关闭的设施（区域5 BA-005）定稿 restrict 必须 422 拒绝。
+closed_code="PD-CLOSED-$(date +%s)"
+closed_payload=$(jq -n --arg code "$closed_code" --arg now "$now" '{code:$code,name:"关闭桥梁设施限速决定",facility:"铁路桥梁封闭停用区域5",owner:"安全主管组",category:"封闭",riskLevel:"high",metricValue:60,metricUnit:"score",effectiveAt:$now,evidence:"关闭桥梁拒绝定稿验证",relatedCode:"BA-005"}')
+closed_created=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/priorities" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$closed_payload")
+closed_id=$(printf '%s' "$closed_created" | jq -er '.data.id')
+closed_final_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/priorities/$closed_id/transition" -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -d '{"status":"restrict","expectedVersion":1,"reason":"关闭桥梁不应放行该定稿"}')
+[ "$closed_final_status" = "422" ]
+
+# K42 桥梁已受限：复核人在仍有确认阶段缺陷时恢复 active 被拒绝，错误写明剩余条数。
+# 先登记一条 K42 新缺陷。
+defect_code="DF-K42-$(date +%s)"
+defect_payload=$(jq -n --arg code "$defect_code" --arg now "$now" '{code:$code,name:"K42限速联动缺陷",facility:"K42 桥梁作业区",owner:"现场处置组",category:"结构",riskLevel:"high",metricValue:55,metricUnit:"score",effectiveAt:$now,evidence:"裂缝照片与量测记录",relatedCode:"BA-004"}')
+defect_id=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/defects" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$defect_payload" | jq -er '.data.id')
+
+bridge_denied=$(curl -sS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/bridges/$k42_bridge_id/transition" -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -d '{"status":"active","expectedVersion":2,"reason":"缺陷尚未离开确认阶段应被拒绝"}')
+printf '%s' "$bridge_denied" | jq -e '.error == "unconfirmed_defects" and (.message | contains("1 defect"))' >/dev/null
+# operator 恢复受限桥梁必须 403。
+bridge_op_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT}/api/bridges/$k42_bridge_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"status":"active","expectedVersion":2,"reason":"operator无权恢复"}')
+[ "$bridge_op_status" = "403" ]
+# 缺陷推进 new -> monitoring 离开确认阶段后，复核人成功恢复 active。
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/defects/$defect_id/transition" -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d '{"status":"monitoring","expectedVersion":1,"reason":"缺陷进入持续监测阶段"}' | jq -e '.data.status == "monitoring"' >/dev/null
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT}/api/bridges/$k42_bridge_id/transition" -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -d '{"status":"active","expectedVersion":2,"reason":"确认阶段缺陷清零复核恢复运行"}' | jq -e '.data.status == "active" and .data.version == 3 and .data.unconfirmedDefectCount == 0' >/dev/null
+
 docker compose ps
 if [ "${KEEP_RUNNING:-0}" = "1" ]; then
 	echo "KEEP_RUNNING=1: containers left running for browser validation"

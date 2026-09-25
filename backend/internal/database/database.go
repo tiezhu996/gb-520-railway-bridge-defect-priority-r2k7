@@ -143,10 +143,20 @@ func seedBridgeAsset(ctx context.Context, db *gorm.DB) error {
 			Category: "重点", RiskLevel: "medium", MetricValue: 25.0, MetricUnit: "%",
 			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-520-02"},
 
-		{BaseModel: model.BaseModel{Code: "BA-003", Name: "桥梁资产示例三", Status: "closed", Version: 1,
-			Description: "用于启动验证和主要流程演示的桥梁资产记录"}, Facility: "铁路桥梁缺陷处置优先级区域3", Owner: "安全主管组",
+		{BaseModel: model.BaseModel{Code: "BA-003", Name: "桥梁资产示例三", Status: "restricted", Version: 1,
+			Description: "限速定稿联动受限的桥梁资产记录（与 PD-003 同设施）"}, Facility: "铁路桥梁缺陷处置优先级区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-520-03"},
+
+		{BaseModel: model.BaseModel{Code: "BA-004", Name: "K42 桥梁作业区正线桥", Status: "active", Version: 1,
+			Description: "空卷验收使用的同设施桥梁，验证限速定稿联动受限"}, Facility: "K42 桥梁作业区", Owner: "现场处置组",
+			Category: "重点", RiskLevel: "medium", MetricValue: 30.0, MetricUnit: "score",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-520-04"},
+
+		{BaseModel: model.BaseModel{Code: "BA-005", Name: "封闭停用支线桥", Status: "closed", Version: 1,
+			Description: "已关闭桥梁，验证限速定稿在关闭设施上不放行"}, Facility: "铁路桥梁封闭停用区域5", Owner: "安全主管组",
+			Category: "封闭", RiskLevel: "high", MetricValue: 0, MetricUnit: "score",
+			EffectiveAt: now.Add(12 * time.Hour), Evidence: "封闭令与停用记录", RelatedCode: "REL-520-05"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
 }

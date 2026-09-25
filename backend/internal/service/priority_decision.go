@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/blueship581/railway-bridge-defect-priority/backend/internal/dto"
 	"github.com/blueship581/railway-bridge-defect-priority/backend/internal/model"
 	"github.com/blueship581/railway-bridge-defect-priority/backend/internal/repository"
+	"gorm.io/gorm"
 )
 
 type PriorityDecisionService interface {
@@ -25,11 +27,13 @@ type PriorityDecisionService interface {
 
 type priorityDecisionService struct {
 	repository repository.PriorityDecisionRepository
+	bridges    repository.BridgeAssetRepository
+	defects    repository.DefectFindingRepository
 	security   SecurityService
 }
 
-func NewPriorityDecisionService(repo repository.PriorityDecisionRepository, security SecurityService) PriorityDecisionService {
-	return &priorityDecisionService{repository: repo, security: security}
+func NewPriorityDecisionService(repo repository.PriorityDecisionRepository, bridges repository.BridgeAssetRepository, defects repository.DefectFindingRepository, security SecurityService) PriorityDecisionService {
+	return &priorityDecisionService{repository: repo, bridges: bridges, defects: defects, security: security}
 }
 
 func (s *priorityDecisionService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.PriorityDecision], error) {
@@ -128,11 +132,39 @@ func (s *priorityDecisionService) Transition(ctx context.Context, id uint, input
 	if err != nil {
 		return model.PriorityDecision{}, err
 	}
-	if err := s.repository.UpdateWithRevision(ctx, id, input.ExpectedVersion, &current, &revision); err != nil {
-		return model.PriorityDecision{}, fmt.Errorf("transition 优先级决定: %w", err)
+	// A finalized restrict/urgent decision takes operational effect on the
+	// same-facility bridge: dispatch must no longer release it at full speed.
+	// observe is monitoring-only and never changes the bridge status.
+	var linkedBridge *model.BridgeAsset
+	if target == string(constants.PriorityLevelRestrict) || target == string(constants.PriorityLevelUrgent) {
+		bridge, bridgeErr := s.bridges.FindByFacility(ctx, current.Facility)
+		if bridgeErr != nil {
+			if errors.Is(bridgeErr, gorm.ErrRecordNotFound) {
+				return model.PriorityDecision{}, ErrBridgeMissing
+			}
+			return model.PriorityDecision{}, fmt.Errorf("locate same-facility bridge: %w", bridgeErr)
+		}
+		switch bridge.Status {
+		case model.BridgeStatusClosed, model.BridgeStatusRetired:
+			// 桥梁已经关闭或者停用，这次定稿就不放行。
+			return model.PriorityDecision{}, fmt.Errorf("%w (%s %s, bridge %s)", ErrBridgeLinkedClosed, current.Code, target, bridge.Code)
+		case model.BridgeStatusActive:
+			// 定稿后要跟着进入受限：active -> restricted 与决定定稿同事务落库。
+			bridge.Status = model.BridgeStatusRestricted
+			bridge.Version++
+			bridge.UpdatedAt = time.Now().UTC()
+			linkedBridge = &bridge
+		}
+	}
+	if err := s.repository.FinalizeWithBridgeChange(ctx, id, input.ExpectedVersion, &current, &revision, linkedBridge); err != nil {
+		return model.PriorityDecision{}, fmt.Errorf("finalize 优先级决定: %w", err)
 	}
 	if err := s.security.Audit(ctx, actor, requestID, "transition", "PriorityDecision", id, before, target, input.Reason); err != nil {
 		return model.PriorityDecision{}, fmt.Errorf("persist transition audit: %w", err)
+	}
+	if linkedBridge != nil {
+		detail := fmt.Sprintf("decision %s finalized as %s forced speed restriction", current.Code, target)
+		_ = s.security.Audit(ctx, actor, requestID, "transition", "BridgeAsset", linkedBridge.ID, model.BridgeStatusActive, model.BridgeStatusRestricted, detail)
 	}
 	return s.repository.Get(ctx, id)
 }

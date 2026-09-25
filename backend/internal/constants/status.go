@@ -15,6 +15,11 @@ const (
 
 var AllDefectState = []string{"new", "verified", "monitoring", "mitigated", "closed"}
 
+// UnconfirmedDefectState lists defects that are still in the confirmation
+// phase (发现 / 已确认但未进入监测). A restricted bridge must not return to
+// normal operation while same-facility defects remain in these states.
+var UnconfirmedDefectState = []string{"new", "verified"}
+
 type PriorityLevel string
 
 const (

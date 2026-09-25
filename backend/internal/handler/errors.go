@@ -12,15 +12,19 @@ import (
 )
 
 func handleError(c *gin.Context, err error) {
+	var unconfirmed *service.ErrUnconfirmedDefects
 	switch {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		util.Fail(c, http.StatusNotFound, "not_found", "record was not found")
 	case errors.Is(err, repository.ErrVersionConflict):
 		util.Fail(c, http.StatusConflict, "version_conflict", "record changed; refresh and retry")
-	case errors.Is(err, service.ErrReviewRole), errors.Is(err, service.ErrNotDecisionOwner):
+	case errors.Is(err, service.ErrReviewRole), errors.Is(err, service.ErrNotDecisionOwner), errors.Is(err, service.ErrBridgeResumeRole):
 		util.Fail(c, http.StatusForbidden, "forbidden", err.Error())
+	case errors.As(err, &unconfirmed):
+		util.Fail(c, http.StatusUnprocessableEntity, "unconfirmed_defects", err.Error())
 	case errors.Is(err, service.ErrInvalidTransition), errors.Is(err, service.ErrInvalidInput),
-		errors.Is(err, service.ErrDecisionLocked), errors.Is(err, service.ErrSeparationOfDuty):
+		errors.Is(err, service.ErrDecisionLocked), errors.Is(err, service.ErrSeparationOfDuty),
+		errors.Is(err, service.ErrBridgeLinkedClosed), errors.Is(err, service.ErrBridgeMissing):
 		util.Fail(c, http.StatusUnprocessableEntity, "business_rule", err.Error())
 	default:
 		_ = c.Error(err)

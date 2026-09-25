@@ -17,26 +17,69 @@ type BridgeAssetService interface {
 	Get(context.Context, uint) (model.BridgeAsset, error)
 	Create(context.Context, dto.CreateBridgeAsset, string, string) (model.BridgeAsset, error)
 	Update(context.Context, uint, dto.UpdateBridgeAsset, string, string) (model.BridgeAsset, error)
-	Transition(context.Context, uint, dto.TransitionRequest, string, string) (model.BridgeAsset, error)
+	Transition(context.Context, uint, dto.TransitionRequest, string, string, string) (model.BridgeAsset, error)
 	Delete(context.Context, uint, string, string) error
 	StatusCounts(context.Context) (map[string]int64, error)
 }
 
 type bridgeAssetService struct {
 	repository repository.BridgeAssetRepository
+	defects    repository.DefectFindingRepository
 	security   SecurityService
 }
 
-func NewBridgeAssetService(repo repository.BridgeAssetRepository, security SecurityService) BridgeAssetService {
-	return &bridgeAssetService{repository: repo, security: security}
+func NewBridgeAssetService(repo repository.BridgeAssetRepository, defects repository.DefectFindingRepository, security SecurityService) BridgeAssetService {
+	return &bridgeAssetService{repository: repo, defects: defects, security: security}
 }
 
 func (s *bridgeAssetService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.BridgeAsset], error) {
-	return s.repository.List(ctx, query)
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return page, err
+	}
+	items := make([]*model.BridgeAsset, len(page.Items))
+	for index := range page.Items {
+		items[index] = &page.Items[index]
+	}
+	if err := s.attachUnconfirmedCounts(ctx, items); err != nil {
+		return page, err
+	}
+	return page, nil
 }
 
 func (s *bridgeAssetService) Get(ctx context.Context, id uint) (model.BridgeAsset, error) {
-	return s.repository.Get(ctx, id)
+	item, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return item, err
+	}
+	if err := s.attachUnconfirmedCounts(ctx, []*model.BridgeAsset{&item}); err != nil {
+		return item, err
+	}
+	return item, nil
+}
+
+// attachUnconfirmedCounts fills the workbench counter with how many
+// same-facility defects are still in the confirmation phase (new/verified).
+func (s *bridgeAssetService) attachUnconfirmedCounts(ctx context.Context, items []*model.BridgeAsset) error {
+	if len(items) == 0 {
+		return nil
+	}
+	facilities := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if !seen[item.Facility] {
+			seen[item.Facility] = true
+			facilities = append(facilities, item.Facility)
+		}
+	}
+	counts, err := s.defects.CountByFacilityAndStates(ctx, facilities, constants.UnconfirmedDefectState)
+	if err != nil {
+		return fmt.Errorf("count unconfirmed defects: %w", err)
+	}
+	for _, item := range items {
+		item.UnconfirmedDefectCount = counts[item.Facility]
+	}
+	return nil
 }
 
 func (s *bridgeAssetService) Create(ctx context.Context, input dto.CreateBridgeAsset, actor, requestID string) (model.BridgeAsset, error) {
@@ -86,10 +129,10 @@ func (s *bridgeAssetService) Update(ctx context.Context, id uint, input dto.Upda
 		return model.BridgeAsset{}, fmt.Errorf("update 桥梁资产: %w", err)
 	}
 	_ = s.security.Audit(ctx, actor, requestID, "update", "BridgeAsset", id, current.Status, current.Status, "updated business fields")
-	return s.repository.Get(ctx, id)
+	return s.Get(ctx, id)
 }
 
-func (s *bridgeAssetService) Transition(ctx context.Context, id uint, input dto.TransitionRequest, actor, requestID string) (model.BridgeAsset, error) {
+func (s *bridgeAssetService) Transition(ctx context.Context, id uint, input dto.TransitionRequest, actor, role, requestID string) (model.BridgeAsset, error) {
 	current, err := s.repository.Get(ctx, id)
 	if err != nil {
 		return model.BridgeAsset{}, err
@@ -97,6 +140,20 @@ func (s *bridgeAssetService) Transition(ctx context.Context, id uint, input dto.
 	target := strings.TrimSpace(input.Status)
 	if !constants.CanTransition(constants.BridgeAssetTransitions, current.Status, target) {
 		return model.BridgeAsset{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
+	}
+	// 受限桥梁恢复运行只能由复核人/admin 操作，并且同设施仍在确认阶段
+	// (new/verified) 的缺陷必须清零；拒绝时要写明还剩几条。
+	if current.Status == model.BridgeStatusRestricted && target == model.BridgeStatusActive {
+		if role != model.RoleReviewer && role != model.RoleAdmin {
+			return model.BridgeAsset{}, ErrBridgeResumeRole
+		}
+		counts, err := s.defects.CountByFacilityAndStates(ctx, []string{current.Facility}, constants.UnconfirmedDefectState)
+		if err != nil {
+			return model.BridgeAsset{}, fmt.Errorf("count unconfirmed defects: %w", err)
+		}
+		if remaining := counts[current.Facility]; remaining > 0 {
+			return model.BridgeAsset{}, &ErrUnconfirmedDefects{Remaining: remaining}
+		}
 	}
 	before := current.Status
 	current.Status = target
@@ -108,7 +165,7 @@ func (s *bridgeAssetService) Transition(ctx context.Context, id uint, input dto.
 	if err := s.security.Audit(ctx, actor, requestID, "transition", "BridgeAsset", id, before, target, input.Reason); err != nil {
 		return model.BridgeAsset{}, fmt.Errorf("persist transition audit: %w", err)
 	}
-	return s.repository.Get(ctx, id)
+	return s.Get(ctx, id)
 }
 
 func (s *bridgeAssetService) Delete(ctx context.Context, id uint, actor, requestID string) error {

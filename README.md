@@ -42,6 +42,9 @@ docker compose down -v --remove-orphans
 - 所有状态变化使用乐观锁并写入审计日志；审计查询仅 reviewer/admin 可见。
 - 优先级决定的每次创建、草稿更新和定稿均追加不可变版本，保留证据、状态、操作者、request ID 和完整快照。
 - 优先级只能由不同于拟制人的 reviewer/admin 定稿；observe/restrict/urgent 均为不可覆盖终态。
+- 定稿联动：定稿为 `restrict`/`urgent` 时，同设施桥梁在同一事务内自动进入 `restricted`（调度按限速放行）；同设施桥梁已 `closed`/`retired`，或找不到同设施桥梁时定稿返回 422。`observe` 仅监测，不改变桥梁状态。
+- 受限恢复守卫：`restricted → active` 只能由 reviewer/admin 发起；同设施仍处于确认阶段（`new`/`verified`）的缺陷未清零时拒绝，错误信息写明剩余条数。缺陷推进到 `monitoring`/`mitigated` 后复核人方可改回正常运行。
+- 桥梁工作台（列表与详情）展示限速状态标签与同设施未确认缺陷条数（`unconfirmedDefectCount`，服务层聚合、不入库）。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
 - 提供脱敏运行配置、当前会话、审计汇总和单实体审计历史接口。
 - 业务工作台支持查询、新建、状态推进、风险标识及操作审计查看。

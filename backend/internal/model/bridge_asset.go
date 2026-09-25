@@ -16,6 +16,11 @@ type BridgeAsset struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// UnconfirmedDefectCount is populated by the service layer (not persisted):
+	// same-facility defects still in new/verified. The 桥梁工作台 shows this so
+	// dispatch and reviewers know why a restricted bridge cannot resume normal
+	// operation.
+	UnconfirmedDefectCount int64 `json:"unconfirmedDefectCount" gorm:"-"`
 }
 
 func (item *BridgeAsset) GetBase() *BaseModel { return &item.BaseModel }
@@ -23,3 +28,10 @@ func (item *BridgeAsset) GetBase() *BaseModel { return &item.BaseModel }
 func (item BridgeAsset) TableName() string { return "bridge_assets" }
 
 var BridgeAssetInitialStatus = "active"
+
+const (
+	BridgeStatusActive     = "active"
+	BridgeStatusRestricted = "restricted"
+	BridgeStatusClosed     = "closed"
+	BridgeStatusRetired    = "retired"
+)

@@ -17,12 +17,34 @@ const showCreate = ref(false);
 const pending = ref<{ item: DomainRecord; status: string } | null>(null);
 const canWrite = computed(() => canAtLeast('operator'));
 const highRisk = computed(() => props.store.items.filter((item: DomainRecord) => ['high', 'critical'].includes(item.riskLevel)).length);
+const restrictedCount = computed(() => props.store.items.filter((item: DomainRecord) => item.status === 'restricted').length);
+const unconfirmedCount = computed(() => props.store.items.reduce((sum: number, item: DomainRecord) => sum + (item.unconfirmedDefectCount || 0), 0));
+const transitionHint = computed(() => {
+	if (!pending.value) return '';
+	if (props.config.key === 'priorityDecision') {
+		return pending.value.status === 'observe'
+			? 'observe 仅进入监测，不改变桥梁状态；定稿后不可覆盖。'
+			: '定稿为限速/立即处置后，同设施桥梁将同事务进入受限；桥梁已关闭或停用时定稿会被拒绝。';
+	}
+	if (props.config.key === 'bridgeAsset' && pending.value.item.status === 'restricted' && pending.value.status === 'active') {
+		const remaining = pending.value.item.unconfirmedDefectCount || 0;
+		return remaining > 0
+			? `仍有 ${remaining} 条同设施缺陷处于 new/verified 确认阶段，恢复运行请求会被拒绝。`
+			: '确认阶段缺陷已清零，复核人可将桥梁改回正常运行。';
+	}
+	return '状态迁移会写入审计日志并保留请求号。';
+});
 
 onMounted(() => void props.store.load(props.config.path));
 
 function targetsFor(item: DomainRecord): readonly string[] {
 	if (props.config.key === 'priorityDecision') {
 		if (!canAtLeast('reviewer') || item.preparedBy === session.value?.username) return [];
+	} else if (props.config.key === 'bridgeAsset') {
+		// 受限桥梁恢复运行只能由复核人/admin 发起；其余桥梁迁移维持 operator。
+		if (!canWrite.value) return [];
+		return allowedTargets(props.config.key, item.status).filter(target =>
+			!(item.status === 'restricted' && target === 'active') || canAtLeast('reviewer'));
 	} else if (!canWrite.value) return [];
 	return allowedTargets(props.config.key, item.status);
 }
@@ -58,6 +80,8 @@ async function confirmTransition() {
 		<section class="metrics">
 			<MetricCard label="记录总数" :value="store.meta.total" detail="当前筛选范围"/>
 			<MetricCard label="高风险" :value="highRisk" detail="需要优先复核"/>
+			<MetricCard v-if="config.key === 'bridgeAsset'" label="限速受限桥梁" :value="restrictedCount" detail="定稿联动受限，调度按限速放行"/>
+			<MetricCard v-if="config.key === 'bridgeAsset'" label="未确认缺陷" :value="unconfirmedCount" detail="同设施 new/verified 未清零，不能恢复运行"/>
 			<MetricCard label="状态种类" :value="new Set(store.items.map((item: DomainRecord) => item.status)).size" detail="状态机覆盖"/>
 		</section>
 		<section v-if="showEvidence" class="evidence-panel"><header><strong>证据摘要</strong><span>最近四条记录</span></header><EvidenceGallery :records="store.items"/></section>
@@ -69,6 +93,14 @@ async function confirmTransition() {
 				<el-table-column label="名称" min-width="180"><template #default="{ row }"><strong>{{ row.name }}</strong><small>{{ row.facility }}</small></template></el-table-column>
 				<el-table-column label="状态" width="130"><template #default="{ row }"><StatusBadge :status="row.status"/></template></el-table-column>
 				<el-table-column label="风险" width="90"><template #default="{ row }"><SeverityBadge v-if="['defectFinding', 'priorityDecision'].includes(config.key)" :severity="row.riskLevel"/><span v-else>{{ row.riskLevel }}</span></template></el-table-column>
+				<el-table-column v-if="config.key === 'bridgeAsset'" label="限速 / 未确认缺陷" width="180"><template #default="{ row }">
+					<div class="bridge-restriction">
+						<el-tag v-if="row.status === 'restricted'" type="warning" effect="dark" size="small">限速受限</el-tag>
+						<el-tag v-else-if="row.status === 'closed' || row.status === 'retired'" type="danger" size="small">已{{ row.status === 'closed' ? '关闭' : '停用' }}·不放行</el-tag>
+						<el-tag v-else type="success" size="small">正常运行</el-tag>
+						<small :class="{ 'remaining-block': (row.unconfirmedDefectCount || 0) > 0 }">未确认缺陷 {{ row.unconfirmedDefectCount || 0 }} 条</small>
+					</div>
+				</template></el-table-column>
 				<el-table-column prop="owner" label="责任人" min-width="130"/>
 				<el-table-column label="指标" width="120"><template #default="{ row }">{{ row.metricValue }} {{ row.metricUnit }}</template></el-table-column>
 				<el-table-column v-if="config.key === 'priorityDecision'" label="版本审计" width="250"><template #default="{ row }"><strong>v{{ row.version }} · {{ row.preparedBy }}</strong><small>{{ latestRevision(row)?.actor }} · {{ latestRevision(row)?.requestId }}</small><small>{{ latestRevision(row)?.evidence }}</small></template></el-table-column>
@@ -77,6 +109,6 @@ async function confirmTransition() {
 			</el-table>
 		</section>
 		<ConfirmDialog v-model="showCreate" :title="`新增${config.label}`" @confirm="createDemo"><p>将创建一条包含完整责任人、风险和证据信息的记录。</p></ConfirmDialog>
-		<ConfirmDialog :model-value="Boolean(pending)" title="确认状态迁移" @update:model-value="pending = null" @confirm="confirmTransition"><p>状态迁移会写入审计日志并保留请求号；优先级定稿后不可覆盖。</p><strong>{{ pending?.item.status }} → {{ pending?.status }}</strong></ConfirmDialog>
+		<ConfirmDialog :model-value="Boolean(pending)" title="确认状态迁移" @update:model-value="pending = null" @confirm="confirmTransition"><p>{{ transitionHint }}</p><strong>{{ pending?.item.status }} → {{ pending?.status }}</strong></ConfirmDialog>
 	</main>
 </template>

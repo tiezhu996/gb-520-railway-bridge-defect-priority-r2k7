@@ -1,6 +1,16 @@
 # 验收记录
 
-验收日期：2026-08-22
+验收日期：2026-09-25（限速定稿联动与受限恢复守卫补充验收）
+
+## 限速定稿联动 / 受限恢复守卫
+
+- 独立 reviewer 将 `K42 桥梁作业区` 的草稿定稿为 urgent/restrict 后，同设施桥梁 BA-004 在同一事务内由 active 进入 restricted，version 自增，并产生 BridgeAsset active→restricted 审计记录。
+- 同设施桥梁为 closed（封闭停用区域5 BA-005）/retired 时定稿 restrict 返回 422 `business_rule`；找不到同设施桥梁时同样 422；定稿被拒绝后决定仍停留在 draft。
+- observe 定稿不改变桥梁状态（BA-001 保持 active、version=1）。
+- 已受限桥梁上再次定稿 restrict/urgent 时桥梁保持 restricted，不重复自增。
+- `restricted → active`：operator 返回 403；reviewer/admin 在同设施存在 new/verified 缺陷时返回 422 `unconfirmed_defects`，信息写明剩余条数（如 `1 defect(s) ...`）；缺陷推进到 monitoring/mitigated、未确认条数清零后复核恢复成功。
+- `/api/bridges` 列表与 `/api/bridges/:id` 详情均返回 `unconfirmedDefectCount`。
+- 服务层新增跨聚合测试见 `backend/internal/service/bridge_linking_test.go`；`go test ./...`、`go test -race ./...`、`go vet ./...`、`go build ./...` 均通过；前端 `npm run typecheck`、`npm run build` 均通过。
 
 ## 静态质量
 

@@ -16,6 +16,9 @@ export interface DomainRecord {
   evidence: string;
   relatedCode: string;
   preparedBy?: string;
+  // Same-facility defects still in the new/verified confirmation phase.
+  // Backend populates this only for bridge assets.
+  unconfirmedDefectCount?: number;
   revisions?: PriorityDecisionRevision[];
   createdAt: string;
   updatedAt: string;

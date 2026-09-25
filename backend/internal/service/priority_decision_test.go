@@ -69,11 +69,19 @@ func newPriorityTestService(t *testing.T) PriorityDecisionService {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&model.PriorityDecision{}, &model.PriorityDecisionRevision{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.BridgeAsset{}, &model.DefectFinding{}, &model.PriorityDecision{}, &model.PriorityDecisionRevision{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	security := NewSecurityService(repository.NewSecurityRepository(db), config.Config{})
-	return NewPriorityDecisionService(repository.NewPriorityDecisionRepository(db), security)
+	bridges := repository.NewBridgeAssetRepository(db)
+	defects := repository.NewDefectFindingRepository(db)
+	if err := bridges.Create(context.Background(), &model.BridgeAsset{
+		BaseModel: model.BaseModel{Code: "BA-TEST", Name: "K42 桥梁", Status: model.BridgeStatusActive, Version: 1},
+		Facility: "K42 bridge", Owner: "infrastructure team",
+	}); err != nil {
+		t.Fatalf("seed bridge: %v", err)
+	}
+	return NewPriorityDecisionService(repository.NewPriorityDecisionRepository(db), bridges, defects, security)
 }
 
 func priorityCreateInput(code, evidence string) dto.CreatePriorityDecision {

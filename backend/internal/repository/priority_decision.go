@@ -15,6 +15,11 @@ type PriorityDecisionRepository interface {
 	Get(context.Context, uint) (model.PriorityDecision, error)
 	CreateWithRevision(context.Context, *model.PriorityDecision, *model.PriorityDecisionRevision) error
 	UpdateWithRevision(context.Context, uint, uint, *model.PriorityDecision, *model.PriorityDecisionRevision) error
+	// FinalizeWithBridgeChange persists the terminal decision revision and,
+	// when the decision forces a same-facility speed restriction, updates that
+	// bridge in the same transaction so dispatch never sees a finalized
+	// restrict/urgent decision against a bridge still marked normal.
+	FinalizeWithBridgeChange(ctx context.Context, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision, bridge *model.BridgeAsset) error
 	Delete(context.Context, uint) error
 	CountByStatus(context.Context) (map[string]int64, error)
 }
@@ -82,9 +87,41 @@ func (r *priorityDecisionRepository) UpdateWithRevision(ctx context.Context, id,
 		return tx.Create(revision).Error
 	})
 }
+func (r *priorityDecisionRepository) FinalizeWithBridgeChange(ctx context.Context, id, version uint, item *model.PriorityDecision, revision *model.PriorityDecisionRevision, bridge *model.BridgeAsset) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.PriorityDecision{}).
+			Where("id = ? AND version = ?", id, version).
+			Select("*").Omit("ID", "Code", "CreatedAt", "DeletedAt", "PreparedBy", "Revisions").
+			Updates(item)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrVersionConflict
+		}
+		revision.PriorityDecisionID = id
+		if err := tx.Create(revision).Error; err != nil {
+			return err
+		}
+		if bridge != nil {
+			bridgeResult := tx.Model(&model.BridgeAsset{}).
+				Where("id = ? AND version = ?", bridge.ID, bridge.Version-1).
+				Select("*").Omit("ID", "Code", "CreatedAt", "DeletedAt").
+				Updates(bridge)
+			if bridgeResult.Error != nil {
+				return bridgeResult.Error
+			}
+			if bridgeResult.RowsAffected == 0 {
+				return ErrVersionConflict
+			}
+		}
+		return nil
+	})
+}
 func (r *priorityDecisionRepository) Delete(ctx context.Context, id uint) error {
 	return r.store.Delete(ctx, id)
 }
+
 func (r *priorityDecisionRepository) CountByStatus(ctx context.Context) (map[string]int64, error) {
 	return r.store.CountByStatus(ctx)
 }

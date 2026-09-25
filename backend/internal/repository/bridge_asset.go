@@ -12,6 +12,7 @@ import (
 type BridgeAssetRepository interface {
 	List(context.Context, dto.PageQuery) (Page[model.BridgeAsset], error)
 	Get(context.Context, uint) (model.BridgeAsset, error)
+	FindByFacility(context.Context, string) (model.BridgeAsset, error)
 	Create(context.Context, *model.BridgeAsset) error
 	Update(context.Context, uint, uint, *model.BridgeAsset) error
 	Delete(context.Context, uint) error
@@ -19,11 +20,12 @@ type BridgeAssetRepository interface {
 }
 
 type bridgeAssetRepository struct {
+	db    *gorm.DB
 	store *Store[model.BridgeAsset]
 }
 
-func NewBridgeAssetRepository(db *gorm.DB) BridgeAssetRepository {
-	return &bridgeAssetRepository{store: NewStore[model.BridgeAsset](db)}
+func NewBridgeAssetRepository(gormDB *gorm.DB) BridgeAssetRepository {
+	return &bridgeAssetRepository{db: gormDB, store: NewStore[model.BridgeAsset](gormDB)}
 }
 
 func (r *bridgeAssetRepository) List(ctx context.Context, q dto.PageQuery) (Page[model.BridgeAsset], error) {
@@ -31,6 +33,13 @@ func (r *bridgeAssetRepository) List(ctx context.Context, q dto.PageQuery) (Page
 }
 func (r *bridgeAssetRepository) Get(ctx context.Context, id uint) (model.BridgeAsset, error) {
 	return r.store.Get(ctx, id)
+}
+func (r *bridgeAssetRepository) FindByFacility(ctx context.Context, facility string) (model.BridgeAsset, error) {
+	var item model.BridgeAsset
+	err := r.db.WithContext(ctx).
+		Where("facility = ?", facility).
+		Order("id ASC").First(&item).Error
+	return item, err
 }
 func (r *bridgeAssetRepository) Create(ctx context.Context, item *model.BridgeAsset) error {
 	return r.store.Create(ctx, item)
